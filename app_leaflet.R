@@ -5,13 +5,14 @@ library(dplyr)
 library(sf)
 library(plotly)
 library(mapboxapi)
+library(leaflet)
 
 mapbox_token <- Sys.getenv("MAPBOX_TOKEN")
 mb_access_token(mapbox_token)
 
-county_shp <- read_rds("data/county_2010_12_sf.rds") %>% st_cast(., "MULTIPOLYGON")
-#zcta_shp <- read_rds("data/zcta_2010_12_sf.rds") %>% st_cast(., "MULTIPOLYGON")
-#tract_shp <- read_rds("data/tract_2010_12_sf.rds")  %>% st_cast(., "MULTIPOLYGON")
+county_shp <- read_rds("data/county_2010_12_sf.rds") %>% st_cast(., "MULTIPOLYGON") %>% st_make_valid(.)
+#zcta_shp <- read_rds("data/zcta_2010_12_sf.rds") %>% st_cast(., "MULTIPOLYGON") %>% st_make_valid(.)
+#tract_shp <- read_rds("data/tract_2010_12_sf.rds")  %>% st_cast(., "MULTIPOLYGON") %>% st_make_valid(.)
 
 # Create selection options -----
 state_val <- state.abb
@@ -49,15 +50,16 @@ ui <- fluidPage(
                         choices = state_val,
                         selected = "PA",
                         multiple = FALSE
-                        ),
-            selectInput(inputId = "county_input",
-                        label = "Select Counties",
-                        choices = NULL,
-                        multiple = TRUE)
+                        )
+            #,
+             # selectInput(inputId = "county_input",
+             #             label = "Select Counties",
+             #             choices = NULL,
+             #             multiple = TRUE)
         ),
         # Show map
         mainPanel(
-           leafletOutput(outputId = "map")
+           plotlyOutput(outputId = "map")
         )
     )
 )
@@ -68,53 +70,69 @@ ui <- fluidPage(
 
 
 server <- function(input, output, session) {
-    observe({
-       # Update counties with the selected state
-         counties <- filtered_data() %>%
-             filter(state.abb == input$state_input) %>%
-             pull(county.name) %>%
-             unique() %>%
-             sort()
-         county_choice <- c("All Counties", counties)
-         updateSelectInput(session, "county_input", choices = county_choice, selected = "All Counties")
-     })
+    # observe({
+    #    # Update counties with the selected state
+    #      counties <- filtered_data() %>%
+    #          filter(state.abb == input$state_input) %>%
+    #          pull(county.name) %>%
+    #          unique() %>%
+    #          sort()
+    #      county_choice <- c("All Counties", counties)
+    #      updateSelectInput(session, "county_input", choices = county_choice, selected = "All Counties")
+    #  })
     
-     data <- reactive({
-         #Can't get this reactive geometry to work...#
-         req(input$geo_input)
-     if ("County" %in% input$geo_input){county_shp}
-         else if ("ZCTA" %in% input$geo_input){zcta_shp}
-         else if ("Census Tracts" %in% input$geo_input){tract_shp}
-     })
+     # data <- reactive({
+     #     #Can't get this reactive geometry to work...#
+     #     req(input$geo_input)
+     # if ("County" %in% input$geo_input){county_shp}
+     #     else if ("ZCTA" %in% input$geo_input){zcta_shp}
+     #     else if ("Census Tracts" %in% input$geo_input){tract_shp}
+     # })
+     # 
+     # data <- reactive({
+     #     req(input$geo_input)
+     #     if("County" %in% input$geo_input) read_rds("data/county_2010_12_sf.rds") %>% st_cast(., "MULTIPOLYGON") %>% st_make_valid(.)
+     #     else if ("ZCTA" %in% input$geo_input) read_rds("data/zcta_2010_12_sf.rds") %>% st_cast(., "MULTIPOLYGON") %>% st_make_valid(.)
+     #     else if ("Census Tracts" %in% input$geo_input) read_rds("data/tract_2010_12_sf.rds")  %>% st_cast(., "MULTIPOLYGON") %>% st_make_valid(.)
+     # })
     
-    filtered_data <- reactive({
-        req(input$geo_input, input$year_input, input$state_input)
-         if ("All Counties" %in% input$county_input){
+     # filtered_data <- reactive({
+     #     req(input$geo_input, input$year_input, input$state_input)
+     #      if ("All Counties" %in% input$county_input){
+     #          data() %>%
+     #      filter(state.abb %in% input$state_input & year %in% input$year_input)
+     #      } else {
+     #          req(input$county_input)
+     #          data() %>%
+     #         filter(state.abb %in% input$state_input & year %in% input$year_input & county.name %in% input$county_input) 
+     #          
+     #      }
+     # })
+     # 
+     filtered_data <- reactive({
+         req(input$geo_input, input$year_input, input$state_input)
              data() %>%
-         filter(state.abb %in% input$state_input & year %in% input$year_input)
-         } else {
-             req(input$county_input)
-             data() %>%
-            filter(state.abb %in% input$state_input & county.name %in% input$county_input & year %in% input$year_input)
-         }
-    })
+                 filter(state.abb %in% input$state_input & year %in% input$year_input) 
+     })
+
     
-    
-    center_lon <- reactive({
-        filtered_data() %>%
-            st_buffer(dist = 0.15) %>%
-            st_bbox() %>%
-            {mean(c(.$xmin, .$xmax))}
-    })
-    
-    center_lat <- reactive({
-        filtered_data() %>%
-            st_buffer(dist = 0.15) %>%
-            st_bbox() %>%
-            {mean(c(.$ymin, .$ymax))}
-    })
-    
-    
+    # center_lon <- reactive({
+    #     filtered_data() %>%
+    #         st_buffer(dist = 0.15) %>%
+    #         st_bbox() %>%
+    #         mean(c(.$xmin, .$xmax))
+    # })
+    # 
+    # center_lat <- reactive({
+    #     filtered_data() %>%
+    #         st_buffer(dist = 0.15) %>%
+    #         st_bbox() %>%
+    #         mean(c(.$ymin, .$ymax))
+    # })
+    # 
+    # 
+    # 
+    # 
 
     output$map <- renderLeaflet({
         pal = colorNumeric(
@@ -133,32 +151,37 @@ server <- function(input, output, session) {
                 stroke = FALSE
             ) %>%
             #I can't get the color scale to match.
-             add_trace(
-                 data = filtered_data(),
-                 type = "scattermapbox",
-                 mode = "markers",
-                 lat = center_lat,
-                 lon = center_lon,
-                 marker = list(
-                      size = 0,
-                      opacity = 0,
-                      cmin = -1,
-                      cmax = 1,
-                      color = ~pal(get(input$seg_input)),
-                      colorbar = list(
-                          title = "color bar"
-                     )
+             # add_trace(
+             #     data = filtered_data(),
+             #     type = "scattermapbox",
+             #     mode = "markers",
+             #     lat = center_lat(),
+             #     lon = center_lon(),
+             #     marker = list(
+             #          size = 0,
+             #          opacity = 0,
+             #          cmin = -1,
+             #          cmax = 1,
+             #          color = ~pal(get(input$seg_input)),
+             #          colorbar = list(
+             #              title = "color bar"
+             #         )
+             #     )
+             # ) %>%
+             layout(
+                 mapbox = list(
+                     style = "mapbox://styles/mapbox/light-v10",  # Choose a mapbox style
+                   #  center = list(lon = center_lon, lat = center_lat),  # Set center coordinates
+                     zoom = 8  # Set zoom level
                  )
-             ) %>%
-            layout(
-                mapbox = list(
-                    style = "mapbox://styles/mapbox/light-v10",  # Choose a mapbox style
-                    center = list(lon = center_lon, lat = center_lat),  # Set center coordinates
-                    zoom = 8  # Set zoom level
-                )
-            ) 
+             ) 
     })
-}
+
+
+    
+    
+    
+    }
 
 
 
