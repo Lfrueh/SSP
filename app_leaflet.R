@@ -69,14 +69,16 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
   data <- reactive({
-    if(T){
+    if(input$geo_input=="County"){
       imported_data <- county_data
-    } else if(F){
+    } else if(input$geo_input=="ZCTA"){
       imported_data <- zcta_data
-    } else if(F){
+    } else if(input$geo_input=="Census Tracts"){
       imported_data <- tract_data
     }
-    imported_data %>% filter(year == 2010 & state.abb == "PA") %>% st_make_valid()
+    imported_data %>% 
+      filter(year == input$year_input & state.abb == input$state_input) %>%
+      st_make_valid(.)
   })
   
   pal = colorNumeric(
