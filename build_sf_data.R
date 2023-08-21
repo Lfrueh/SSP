@@ -92,9 +92,9 @@ data_tract <- data_tract %>%
 
 # Join with sf objects ----
 
-county_joined <- left_join(county_2010, data_county, by = "GEOID10")
-zcta_joined <- left_join(zcta_2010, data_zcta, by = "GEOID10")
-tract_joined <- left_join(tract_2010, data_tract, by = "GEOID10")
+county_joined <- left_join(county_2010, data_county, by = "GEOID10") %>% st_cast(., "MULTIPOLYGON") %>% st_make_valid(.)
+zcta_joined <- left_join(zcta_2010, data_zcta, by = "GEOID10") %>% st_cast(., "MULTIPOLYGON") %>% st_make_valid(.)
+tract_joined <- left_join(tract_2010, data_tract, by = "GEOID10") %>% st_cast(., "MULTIPOLYGON") %>% st_make_valid(.)
 
 # Save sf objects as rds ----
 
@@ -102,3 +102,7 @@ tract_joined <- left_join(tract_2010, data_tract, by = "GEOID10")
 write_rds(county_joined, "data/county_2010_12_sf.rds")
 write_rds(zcta_joined, "data/zcta_2010_12_sf.rds")
 write_rds(tract_joined, "data/tract_2010_12_sf.rds")
+
+
+
+
