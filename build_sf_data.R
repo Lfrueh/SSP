@@ -60,6 +60,16 @@ data_county <- data_county %>%
   left_join(., fips, by=c("statefp", "countyfp"))
 
 ## ZCTA -----
+zcta_to_county <- read_delim(
+  "https://www2.census.gov/geo/docs/maps-data/data/rel/zcta_county_rel_10.txt",
+  delim = ","
+) %>% 
+  rename(
+    GEOID10 = ZCTA5,
+    statefp = STATE,
+    countyfp = COUNTY
+  ) 
+
 data_zcta <- data.frame()
 for (year in data_years[2:3]){
   data <- read_csv(paste0("https://raw.githubusercontent.com/samjaros-stanford/spatial_social_polarization_database/main/ICE/ice_acs_",
@@ -70,9 +80,8 @@ for (year in data_years[2:3]){
 
 data_zcta <- data_zcta %>%
   rename(GEOID10 = GEOID) %>%
-  mutate(statefp = str_sub(GEOID10, 1, 2),
-         countyfp = str_sub(GEOID10, 3, 5)) %>%
-  left_join(., fips, by=c("statefp", "countyfp"))
+  left_join(., zcta_to_county, by = "GEOID10", relationship = "many-to-many") %>%
+  left_join(., fips, by = c("statefp", "countyfp"))
 
 ## Tracts -----
 data_tract <- data.frame()
@@ -92,9 +101,9 @@ data_tract <- data_tract %>%
 
 # Join with sf objects ----
 
-county_joined <- left_join(county_2010, data_county, by = "GEOID10")
-zcta_joined <- left_join(zcta_2010, data_zcta, by = "GEOID10")
-tract_joined <- left_join(tract_2010, data_tract, by = "GEOID10")
+county_joined <- left_join(county_2010, data_county, by = "GEOID10")  %>% st_cast(., "MULTIPOLYGON") %>% st_make_valid(.)
+zcta_joined <- left_join(zcta_2010, data_zcta, by = "GEOID10") %>% st_cast(., "MULTIPOLYGON") %>% st_make_valid(.)
+tract_joined <- left_join(tract_2010, data_tract, by = "GEOID10")  %>% st_cast(., "MULTIPOLYGON") %>% st_make_valid(.)
 
 # Save sf objects as rds ----
 

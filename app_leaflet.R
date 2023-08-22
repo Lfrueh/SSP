@@ -6,6 +6,7 @@ library(sf)
 library(plotly)
 library(mapboxapi)
 library(leaflet)
+library(shinycssloaders)
 
 mapbox_token <- Sys.getenv("MAPBOX_TOKEN")
 mb_access_token(mapbox_token)
@@ -50,21 +51,22 @@ ui <- fluidPage(
                         choices = state_val,
                         selected = "PA",
                         multiple = FALSE),
-            selectInput(inputId = "county_input",
-                        label = "Select Counties",
-                        choices = NULL,
-                        multiple = TRUE)
+            uiOutput("county_select")
         ),
         # Show map
         mainPanel(
+          withSpinner(
            plotlyOutput(outputId = "map")
+          )
         )
     )
 )
 
 
 # Server -----
-
+pal = colorNumeric(
+  palette = c("orange", "white", "blue"),
+  domain = c(-1, 1))
 
 
 server <- function(input, output, session) {
@@ -77,24 +79,59 @@ server <- function(input, output, session) {
       imported_data <- tract_data
     }
     imported_data %>% 
-      filter(year == input$year_input & state.abb == input$state_input) %>%
-      st_make_valid(.)
+      filter(year == input$year_input & state.abb == input$state_input) 
   })
   
-  pal = colorNumeric(
-    palette = c("orange", "white", "blue"),
-    domain = c(-1, 1))
+  # Reactive expression for county choices
+  county_choices <- reactive({
+    data() %>%
+      pull(county.name) %>%
+      unique() %>%
+      sort()
+  })
   
+  # Update county selection UI
+  output$county_select <- renderUI({
+    selectInput(inputId = "county_input",
+                label = "Select Counties",
+                choices = county_choices(),
+                multiple = TRUE)
+  })
+  
+  filtered_data <- reactive({  
+    if (!is.null(input$county_input) && length(input$county_input) > 0) {
+    filtered_data <- data() %>%
+      filter(county.name %in% input$county_input)
+    }
+    else {
+      filtered_data <- data()
+    }
+    filtered_data
+  })
+
+
+
   output$map = renderPlotly({
+    ice_name <- names(ice_val[ice_val == input$seg_input])
     plot_mapbox(
-      data = data(),
+      data = filtered_data(),
       split = ~GEOID10,
-      fillcolor = ~pal(ICEincome),
+      fillcolor = ~pal(get(input$seg_input)),
       opacity = 0.5,
       hoverinfo = "text",
-      text = ~paste(county.name, ": ", round(ICEincome, 2)),
+      text = ~paste(county.name, ": ", round(get(input$seg_input), 2)),
       showlegend = FALSE,
-      stroke = FALSE)
+      stroke = FALSE) %>%
+      layout(
+        title = paste0(ice_name,": ", 
+                       input$county_input, " ",input$state_input),  # Add your desired title
+        mapbox = list(
+          style = "light",
+          colorbar = list(
+            title = "Color Bar Title"  # Add your color bar title
+          )
+        )
+      )
   })
 }
 
