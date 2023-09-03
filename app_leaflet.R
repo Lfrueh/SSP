@@ -55,6 +55,8 @@ ui <- fluidPage(
         ),
         # Show map
         mainPanel(
+          # Conditional help text
+          uiOutput("helptext"),
           withSpinner(
            plotlyOutput(outputId = "map")
           )
@@ -70,21 +72,11 @@ pal = colorNumeric(
 
 
 server <- function(input, output, session) {
-  data <- reactive({
-    if(input$geo_input=="County"){
-      imported_data <- county_data
-    } else if(input$geo_input=="ZCTA"){
-      imported_data <- zcta_data
-    } else if(input$geo_input=="Census Tracts"){
-      imported_data <- tract_data
-    }
-    imported_data %>% 
-      filter(year == input$year_input & state.abb == input$state_input) 
-  })
   
   # Reactive expression for county choices
   county_choices <- reactive({
-    data() %>%
+    county_data %>% 
+      filter(state.abb == input$state_input) %>%
       pull(county.name) %>%
       unique() %>%
       sort()
@@ -98,23 +90,65 @@ server <- function(input, output, session) {
                 multiple = TRUE)
   })
   
-  filtered_data <- reactive({  
-    if (!is.null(input$county_input) && length(input$county_input) > 0) {
-    filtered_data <- data() %>%
-      filter(county.name %in% input$county_input)
+  data <- reactive({
+    if(input$geo_input=="County"){
+        imported_data <- county_data %>% filter(year == input$year_input & 
+                                                  state.abb == input$state_input &
+                                                  (is.null(input$county_input) | county.name %in% input$county_input))
     }
-    else {
-      filtered_data <- data()
+
+      else if(input$geo_input=="ZCTA"){
+      imported_data <- zcta_data %>% filter(year == input$year_input & 
+                                              state.abb == input$state_input & 
+                                              county.name %in% input$county_input) 
+    } else if(input$geo_input=="Census Tracts"){
+      imported_data <- tract_data %>% filter(year == input$year_input & 
+                                               state.abb == input$state_input & 
+                                               county.name %in% input$county_input)
     }
-    filtered_data
+    return(imported_data)
   })
-
-
+  
+  
+  
+  helptext <- reactive({
+    if (is.null(data()) || nrow(data()) == 0) {
+      if(input$geo_input %in% c("County", "ZCTA") && input$year_input > 2010){
+          return(HTML("<p style='font-size: 16px; font-weight: bold; color: red;'>
+          Please select at least one county to render map!
+                      </p>"))
+        }
+      else if (input$geo_input == "ZCTA" && input$year_input ==2010){
+        return(HTML("<p style='font-size: 16px; font-weight: bold; color: red;'>
+          ZCTA Available in years 2011 and later.
+                      </p>"))
+      }
+      else {
+        return(HTML("<p style='font-size: 16px; font-weight: bold; color: red;'>
+          Please select at least one county to render map!
+                      </p>"))
+      }
+      
+    } else if (input$seg_input == "ICEedu" && input$year_input < 2012){
+      return(HTML("<p style='font-size: 16px; font-weight: bold; color: red;'>
+          ICE Education abailable in years 2012 and later.
+                      </p>"))  
+    }
+      else {
+      return(NULL)
+    }
+  })
+  
+  # Render the help text
+  output$helptext <- renderUI({
+    helptext()
+  })
+  
 
   output$map = renderPlotly({
     ice_name <- names(ice_val[ice_val == input$seg_input])
     plot_mapbox(
-      data = filtered_data(),
+      data = data(),
       split = ~GEOID10,
       fillcolor = ~pal(get(input$seg_input)),
       opacity = 0.5,
