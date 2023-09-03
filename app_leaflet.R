@@ -58,8 +58,9 @@ ui <- fluidPage(
           # Conditional help text
           uiOutput("helptext"),
           withSpinner(
-           plotlyOutput(outputId = "map")
-          )
+           plotlyOutput("map")
+          ),
+          plotlyOutput("histogram")
         )
     )
 )
@@ -67,7 +68,7 @@ ui <- fluidPage(
 
 # Server -----
 pal = colorNumeric(
-  palette = c("orange", "white", "blue"),
+  palette = colorRamp(c("orange", "white", "blue")),
   domain = c(-1, 1))
 
 
@@ -90,6 +91,7 @@ server <- function(input, output, session) {
                 multiple = TRUE)
   })
   
+  #Filtered data based on inputs
   data <- reactive({
     if(input$geo_input=="County"){
         imported_data <- county_data %>% filter(year == input$year_input & 
@@ -99,7 +101,7 @@ server <- function(input, output, session) {
 
       else if(input$geo_input=="ZCTA"){
       imported_data <- zcta_data %>% filter(year == input$year_input & 
-                                              state.abb == input$state_input & 
+                                              state.abb == input$state_input &
                                               county.name %in% input$county_input) 
     } else if(input$geo_input=="Census Tracts"){
       imported_data <- tract_data %>% filter(year == input$year_input & 
@@ -110,7 +112,7 @@ server <- function(input, output, session) {
   })
   
   
-  
+  #Help text if disallowed combinations are used
   helptext <- reactive({
     if (is.null(data()) || nrow(data()) == 0) {
       if(input$geo_input %in% c("County", "ZCTA") && input$year_input > 2010){
@@ -144,8 +146,36 @@ server <- function(input, output, session) {
     helptext()
   })
   
+  hovertext <- reactive({
+    if (input$geo_input == "County"){
+      ~paste(county.name, ": ", round(get(input$seg_input), 2))
+    } else if (input$geo_input == "ZCTA"){
+      ~paste(GEOID10, ": ", round(get(input$seg_input), 2))
+    } else if (input$geo_input == "Census Tracts"){
+      ~paste(NAMELSAD10, ": ", round(get(input$seg_input), 2))
+    }
+  })
+  
 
-  output$map = renderPlotly({
+  
+  #Render the histogram
+  output$histogram <- renderPlotly({
+    data() %>%
+      filter(!is.na(get(input$seg_input))) %>%
+      ggplot(aes(x = get(input$seg_input), fill = ..x..)) +
+      geom_histogram(bins = 50, col = I("grey")) +
+      scale_fill_gradient2(low='orange', mid='white', high='blue',  limits = c(-1,1),
+                           name = input$seg_input) +
+      labs(
+        x = input$seg_input,
+        y = "Count"
+      ) + 
+      theme_minimal()
+  })
+  
+  
+  # Render the map
+  output$map <- renderPlotly({
     ice_name <- names(ice_val[ice_val == input$seg_input])
     plot_mapbox(
       data = data(),
@@ -153,9 +183,9 @@ server <- function(input, output, session) {
       fillcolor = ~pal(get(input$seg_input)),
       opacity = 0.5,
       hoverinfo = "text",
-      text = ~paste(county.name, ": ", round(get(input$seg_input), 2)),
+      text = hovertext(),
       showlegend = FALSE,
-      stroke = FALSE) %>%
+      stroke = I("grey")) %>%
       layout(
         title = paste0(ice_name,": ", 
                        input$county_input, " ",input$state_input),  # Add your desired title
