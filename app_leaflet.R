@@ -197,6 +197,26 @@ server <- function(input, output, session) {
         )
       )
   })
+  
+  
+  #Render the histogram
+  output$histogram <- renderPlotly({
+    data() %>%
+      filter(!is.na(get(input$seg_input))) %>%
+      ggplot(aes(x = get(input$seg_input), fill = ..x..)) +
+      geom_histogram(bins = 30, col = I("grey")) +
+      scale_fill_gradient2(low='orange', mid='white', high='blue',  limits = c(-1,1),
+                           name = input$seg_input) +
+      labs(
+        x = input$seg_input,
+        y = "Count"
+      ) + 
+      theme_minimal()
+  })
+  
+  
+  
+  
 }
 
 # Run the application -----
