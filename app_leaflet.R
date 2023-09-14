@@ -7,6 +7,7 @@ library(plotly)
 library(mapboxapi)
 library(leaflet)
 library(shinycssloaders)
+library(readxl)
 
 mapbox_token <- Sys.getenv("MAPBOX_TOKEN")
 mb_access_token(mapbox_token)
@@ -29,42 +30,59 @@ ice_val <- c(
 )
 
 # User interface -----
-ui <- fluidPage(
-    titlePanel("Index of Concentration at the Extremes"),
-    sidebarLayout(
-        sidebarPanel(
-            selectInput(inputId = "year_input",
-                        label = "Select a Year",
-                        choices = c("2010", "2011", "2012"),
-                        multiple = FALSE),
-            selectInput(inputId = "geo_input",
-                        label = "Select Geography",
-                        choices = c("County","ZCTA", "Census Tracts"),
-                        multiple = FALSE,
-                        selected = "County"),
-            selectInput(inputId = "seg_input",
-                        label = "Select a Segregation Measure",
-                        choices = ice_val,
-                        multiple = FALSE),
-            selectInput(inputId = "state_input",
-                        label = "Select a State",
-                        choices = state_val,
-                        selected = "PA",
-                        multiple = FALSE),
-            uiOutput("county_select")
-        ),
-        # Show map
-        mainPanel(
-          # Conditional help text
-          uiOutput("helptext"),
-          withSpinner(
-           plotlyOutput("map")
-          ),
-          plotlyOutput("histogram")
-        )
-    )
+ui <- navbarPage(
+  "Index of Concentration at the Extremes",
+  tabPanel("Interactive Map", 
+           sidebarLayout(
+             sidebarPanel(
+               HTML(paste("<h3> Select Data </h3>")),
+               selectInput(inputId = "year_input",
+                           label = "Select a Year",
+                           choices = c("2010", "2011", "2012"),
+                           multiple = FALSE),
+               selectInput(inputId = "geo_input",
+                           label = "Select Geography",
+                           choices = c("County","ZCTA", "Census Tracts"),
+                           multiple = FALSE,
+                           selected = "County"),
+               selectInput(inputId = "seg_input",
+                           label = "Select a Segregation Measure",
+                           choices = ice_val,
+                           multiple = FALSE),
+               selectInput(inputId = "state_input",
+                           label = "Select a State",
+                           choices = state_val,
+                           selected = "PA",
+                           multiple = FALSE),
+               uiOutput("county_select"),
+               HTML(paste("<h3> Download Data </h3>")),
+               downloadButton("download", "Download Filtered Data as .csv")
+             ),
+             # Show map
+             mainPanel(
+               # Conditional help text
+               uiOutput("helptext"),
+               withSpinner(
+                 plotlyOutput("map")
+               ),
+               plotlyOutput("histogram")
+             )
+           ),
+           tags$style(
+             HTML(".shiny-output-error {
+      color: white; /* Set the text color to white */
+    }")
+           ),
+           fluid = TRUE),
+  tabPanel("Details and Methodology",
+           includeHTML("details.Rhtml"),
+           HTML(paste("<h3> Variable Definitions </h3>")),
+           tableOutput("data_def"),
+           HTML(paste("<h3> Data Availability </h3>")),
+           tableOutput("data_avail"),
+           fluid = TRUE)
 )
-
+  
 
 # Server -----
 pal = colorNumeric(
@@ -74,7 +92,8 @@ pal = colorNumeric(
 
 server <- function(input, output, session) {
   
-  # Reactive expression for county choices
+# Reactive Expressions ----
+  ## County Choices ----
   county_choices <- reactive({
     county_data %>% 
       filter(state.abb == input$state_input) %>%
@@ -83,7 +102,7 @@ server <- function(input, output, session) {
       sort()
   })
   
-  # Update county selection UI
+  ### Update county selection UI ----
   output$county_select <- renderUI({
     selectInput(inputId = "county_input",
                 label = "Select Counties",
@@ -91,7 +110,7 @@ server <- function(input, output, session) {
                 multiple = TRUE)
   })
   
-  #Filtered data based on inputs
+  ## Filtered data ----
   data <- reactive({
     if(input$geo_input=="County"){
         imported_data <- county_data %>% filter(year == input$year_input & 
@@ -111,8 +130,10 @@ server <- function(input, output, session) {
     return(imported_data)
   })
   
+
   
-  #Help text if disallowed combinations are used
+  
+## Help Text ----
   helptext <- reactive({
     if (is.null(data()) || nrow(data()) == 0) {
       if(input$geo_input %in% c("County", "ZCTA") && input$year_input > 2010){
@@ -133,7 +154,7 @@ server <- function(input, output, session) {
       
     } else if (input$seg_input == "ICEedu" && input$year_input < 2012){
       return(HTML("<p style='font-size: 16px; font-weight: bold; color: red;'>
-          ICE Education abailable in years 2012 and later.
+          ICE Education available in years 2012 and later.
                       </p>"))  
     }
       else {
@@ -141,11 +162,12 @@ server <- function(input, output, session) {
     }
   })
   
-  # Render the help text
   output$helptext <- renderUI({
     helptext()
   })
   
+
+## Hover Text -----
   hovertext <- reactive({
     if (input$geo_input == "County"){
       ~paste(county.name, ": ", round(get(input$seg_input), 2))
@@ -157,8 +179,8 @@ server <- function(input, output, session) {
   })
   
 
-  
-  #Render the histogram
+# Outputs ----- 
+## Histogram -----
   output$histogram <- renderPlotly({
     data() %>%
       filter(!is.na(get(input$seg_input))) %>%
@@ -172,9 +194,9 @@ server <- function(input, output, session) {
       ) + 
       theme_minimal()
   })
+
   
-  
-  # Render the map
+## Map -----
   output$map <- renderPlotly({
     ice_name <- names(ice_val[ice_val == input$seg_input])
     plot_mapbox(
@@ -198,23 +220,38 @@ server <- function(input, output, session) {
       )
   })
   
+## Download Button ----
+  output$download <- downloadHandler(
+    filename = function() {
+      ice <- input$seg_input
+      geo <- input$geo_input
+      state <- input$state_input
+      county <- if (is.null(input$county_input) || length(input$county_input) == 0) {
+        "All_Counties"  # Default value if no county selected
+      } else {
+        paste(input$county_input, collapse = "_")
+      }
+      year <- input$year_input
+      # Set the filename for the downloaded CSV
+      paste(ice, geo, state, county, year, ".csv", sep = "-")
+    },
+    content = function(file) {
+      data_dl <- data() %>%
+        st_drop_geometry(.)
+      # Write the filtered data to a CSV file
+      write.csv(data_dl, file)
+    }
+  )
   
-  #Render the histogram
-  output$histogram <- renderPlotly({
-    data() %>%
-      filter(!is.na(get(input$seg_input))) %>%
-      ggplot(aes(x = get(input$seg_input), fill = ..x..)) +
-      geom_histogram(bins = 30, col = I("grey")) +
-      scale_fill_gradient2(low='orange', mid='white', high='blue',  limits = c(-1,1),
-                           name = input$seg_input) +
-      labs(
-        x = input$seg_input,
-        y = "Count"
-      ) + 
-      theme_minimal()
-  })
+
   
-  
+## Methodology ---- 
+output$data_def <- renderTable(
+  read_excel("data/data_def.xlsx")
+)
+output$data_avail <- renderTable(
+  read_excel("data/data_avail.xlsx")
+)
   
   
 }
