@@ -12,21 +12,19 @@ library(readxl)
 mapbox_token <- Sys.getenv("MAPBOX_TOKEN")
 mb_access_token(mapbox_token)
 
-county_data <- read_rds("data/county_2010_12_sf.rds")
-zcta_data <- read_rds("data/zcta_2010_12_sf.rds")
-tract_data <- read_rds("data/tract_2010_12_sf.rds")
+
 
 # Create selection options -----
 state_val <- state.abb
 
 ice_val <- c(
-    "ICE Income" = "ICEincome",
-    "ICE Race/ethnicity" = "ICEraceeth",
-    "ICE Homeownership" = "ICEhome",
-    "ICE Income + Race" = "ICEincwb",
-    "ICE Income + Race/ethnicity" = "ICEincwnh",
-    "ICE Education" = "ICEedu",
-    "ICE Language" = "ICElanguage"
+  "ICE Income" = "ICEincome",
+  "ICE Race/ethnicity" = "ICEraceeth",
+  "ICE Homeownership" = "ICEhome",
+  "ICE Income + Race" = "ICEincwb",
+  "ICE Income + Race/ethnicity" = "ICEincwnh",
+  "ICE Education" = "ICEedu",
+  "ICE Language" = "ICElanguage"
 )
 
 # User interface -----
@@ -82,7 +80,7 @@ ui <- navbarPage(
            tableOutput("data_avail"),
            fluid = TRUE)
 )
-  
+
 
 # Server -----
 pal = colorNumeric(
@@ -92,10 +90,10 @@ pal = colorNumeric(
 
 server <- function(input, output, session) {
   
-# Reactive Expressions ----
+  # Reactive Expressions ----
   ## County Choices ----
   county_choices <- reactive({
-    county_data %>% 
+    county_data() %>% 
       filter(state.abb == input$state_input) %>%
       pull(county.name) %>%
       unique() %>%
@@ -111,36 +109,41 @@ server <- function(input, output, session) {
   })
   
   ## Filtered data ----
+  
+  county_data <- reactive({read_rds("data/county_2010_12_sf.rds") %>% filter(year == input$year_input) })
+  zcta_data <- reactive({read_rds("data/zcta_2010_12_sf.rds") %>% filter(year == input$year_input)})
+  tract_data <- reactive({read_rds("data/tract_2010_12_sf.rds") %>% filter(year == input$year_input)})
+  
   data <- reactive({
     if(input$geo_input=="County"){
-        imported_data <- county_data %>% filter(year == input$year_input & 
-                                                  state.abb == input$state_input &
-                                                  (is.null(input$county_input) | county.name %in% input$county_input))
+      imported_data <- county_data() %>% filter(
+        state.abb == input$state_input &
+          (is.null(input$county_input) | county.name %in% input$county_input))
     }
-
-      else if(input$geo_input=="ZCTA"){
-      imported_data <- zcta_data %>% filter(year == input$year_input & 
-                                              state.abb == input$state_input &
-                                              county.name %in% input$county_input) 
+    
+    else if(input$geo_input=="ZCTA"){
+      imported_data <- zcta_data() %>% filter(
+        state.abb == input$state_input &
+          county.name %in% input$county_input) 
     } else if(input$geo_input=="Census Tracts"){
-      imported_data <- tract_data %>% filter(year == input$year_input & 
-                                               state.abb == input$state_input & 
-                                               county.name %in% input$county_input)
+      imported_data <- tract_data() %>% filter(
+        state.abb == input$state_input & 
+          county.name %in% input$county_input)
     }
     return(imported_data)
   })
   
-
   
   
-## Help Text ----
+  
+  ## Help Text ----
   helptext <- reactive({
     if (is.null(data()) || nrow(data()) == 0) {
       if(input$geo_input %in% c("County", "ZCTA") && input$year_input > 2010){
-          return(HTML("<p style='font-size: 16px; font-weight: bold; color: red;'>
+        return(HTML("<p style='font-size: 16px; font-weight: bold; color: red;'>
           Please select at least one county to render map!
                       </p>"))
-        }
+      }
       else if (input$geo_input == "ZCTA" && input$year_input ==2010){
         return(HTML("<p style='font-size: 16px; font-weight: bold; color: red;'>
           ZCTA Available in years 2011 and later.
@@ -157,7 +160,7 @@ server <- function(input, output, session) {
           ICE Education available in years 2012 and later.
                       </p>"))  
     }
-      else {
+    else {
       return(NULL)
     }
   })
@@ -166,8 +169,8 @@ server <- function(input, output, session) {
     helptext()
   })
   
-
-## Hover Text -----
+  
+  ## Hover Text -----
   hovertext <- reactive({
     if (input$geo_input == "County"){
       ~paste(county.name, ": ", round(get(input$seg_input), 2))
@@ -178,9 +181,9 @@ server <- function(input, output, session) {
     }
   })
   
-
-# Outputs ----- 
-## Histogram -----
+  
+  # Outputs ----- 
+  ## Histogram -----
   output$histogram <- renderPlotly({
     data() %>%
       filter(!is.na(get(input$seg_input))) %>%
@@ -194,9 +197,9 @@ server <- function(input, output, session) {
       ) + 
       theme_minimal()
   })
-
   
-## Map -----
+  
+  ## Map -----
   output$map <- renderPlotly({
     ice_name <- names(ice_val[ice_val == input$seg_input])
     plot_mapbox(
@@ -220,7 +223,7 @@ server <- function(input, output, session) {
       )
   })
   
-## Download Button ----
+  ## Download Button ----
   output$download <- downloadHandler(
     filename = function() {
       ice <- input$seg_input
@@ -243,15 +246,15 @@ server <- function(input, output, session) {
     }
   )
   
-
   
-## Methodology ---- 
-output$data_def <- renderTable(
-  read_excel("data/data_def.xlsx")
-)
-output$data_avail <- renderTable(
-  read_excel("data/data_avail.xlsx")
-)
+  
+  ## Methodology ---- 
+  output$data_def <- renderTable(
+    read_excel("data/data_def.xlsx")
+  )
+  output$data_avail <- renderTable(
+    read_excel("data/data_avail.xlsx")
+  )
   
   
 }
