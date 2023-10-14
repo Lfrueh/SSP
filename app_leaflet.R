@@ -36,16 +36,7 @@ ui <- navbarPage(
                HTML(paste("<h3> Select Data </h3>")),
                selectInput(inputId = "year_input",
                            label = "Select a Year",
-                           choices = c("2010", "2011", "2012"),
-                           multiple = FALSE),
-               selectInput(inputId = "geo_input",
-                           label = "Select Geography",
-                           choices = c("County","ZCTA", "Census Tracts"),
-                           multiple = FALSE,
-                           selected = "County"),
-               selectInput(inputId = "seg_input",
-                           label = "Select a Segregation Measure",
-                           choices = ice_val,
+                           choices = seq(2010, 2019, 1),
                            multiple = FALSE),
                selectInput(inputId = "state_input",
                            label = "Select a State",
@@ -53,6 +44,16 @@ ui <- navbarPage(
                            selected = "PA",
                            multiple = FALSE),
                uiOutput("county_select"),
+               selectInput(inputId = "seg_input",
+                           label = "Select a Segregation Measure",
+                           choices = ice_val,
+                           multiple = FALSE),
+               selectInput(inputId = "geo_input",
+                           label = "Select Geography",
+                           choices = c("County","ZCTA", "Census Tracts"),
+                           multiple = FALSE,
+                           selected = "County"),
+               HTML(paste("<em> Note that ZCTA and Census Tract data may take longer to load. </em>")),
                HTML(paste("<h3> Download Data </h3>")),
                downloadButton("download", "Download Filtered Data as .csv")
              ),
@@ -91,6 +92,20 @@ pal = colorNumeric(
 server <- function(input, output, session) {
   
   # Reactive Expressions ----
+  
+  county_data <- reactive({
+    data <- read_rds("data/county_2010_19_sf.rds") %>% filter(year == input$year_input)
+    return(data)
+  }) %>% bindCache(input$year_input)
+  zcta_data <- reactive({
+    data <- read_rds("data/zcta_2010_19_sf.rds") %>% filter(year == input$year_input)
+    return(data)
+  }) %>% bindCache(input$year_input)
+  tract_data <- reactive({
+    data <- read_rds("data/tract_2010_19_sf.rds") %>% filter(year == input$year_input)
+    return(data)
+  }) %>% bindCache(input$year_input)
+  
   ## County Choices ----
   county_choices <- reactive({
     county_data() %>% 
@@ -98,7 +113,7 @@ server <- function(input, output, session) {
       pull(county.name) %>%
       unique() %>%
       sort()
-  })
+  }) %>% bindCache(input$state_input)
   
   ### Update county selection UI ----
   output$county_select <- renderUI({
@@ -109,30 +124,25 @@ server <- function(input, output, session) {
   })
   
   ## Filtered data ----
-  
-  county_data <- reactive({read_rds("data/county_2010_12_sf.rds") %>% filter(year == input$year_input) })
-  zcta_data <- reactive({read_rds("data/zcta_2010_12_sf.rds") %>% filter(year == input$year_input)})
-  tract_data <- reactive({read_rds("data/tract_2010_12_sf.rds") %>% filter(year == input$year_input)})
-  
-  data <- reactive({
+  data2 <- reactive({
     if(input$geo_input=="County"){
-      imported_data <- county_data() %>% filter(
-        state.abb == input$state_input &
-          (is.null(input$county_input) | county.name %in% input$county_input))
+      imported_data <- county_data() 
     }
-    
     else if(input$geo_input=="ZCTA"){
-      imported_data <- zcta_data() %>% filter(
-        state.abb == input$state_input &
-          county.name %in% input$county_input) 
+      imported_data <- zcta_data() 
     } else if(input$geo_input=="Census Tracts"){
-      imported_data <- tract_data() %>% filter(
-        state.abb == input$state_input & 
-          county.name %in% input$county_input)
+      imported_data <- tract_data() 
     }
     return(imported_data)
-  })
+  }) 
   
+  data <- reactive({
+    data <- data2() %>% filter(
+      state.abb == input$state_input &
+        (is.null(input$county_input) | county.name %in% input$county_input))
+    return(data)
+  }) 
+
   
   
   

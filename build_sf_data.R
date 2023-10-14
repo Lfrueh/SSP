@@ -42,7 +42,7 @@ fips <- read_csv(
   select(-classfp)
 
 #Download year/ice tables
-data_years <- seq(2010, 2012, 1)
+data_years <- seq(2010, 2019, 1)
 
 ## County -----
 data_county <- data.frame()
@@ -71,7 +71,7 @@ zcta_to_county <- read_delim(
   ) 
 
 data_zcta <- data.frame()
-for (year in data_years[2:3]){
+for (year in data_years[2:10]){
   data <- read_csv(paste0("https://raw.githubusercontent.com/samjaros-stanford/spatial_social_polarization_database/main/ICE/ice_acs_",
                           year,"_zcta.csv")) 
   data$year <- year
@@ -108,6 +108,6 @@ tract_joined <- left_join(tract_2010, data_tract, by = "GEOID10")  %>% st_cast(.
 # Save sf objects as rds ----
 
 ## County -----
-write_rds(county_joined, "data/county_2010_12_sf.rds")
-write_rds(zcta_joined, "data/zcta_2010_12_sf.rds")
-write_rds(tract_joined, "data/tract_2010_12_sf.rds")
+write_rds(county_joined, "data/county_2010_19_sf.rds")
+write_rds(zcta_joined, "data/zcta_2010_19_sf.rds")
+write_rds(tract_joined, "data/tract_2010_19_sf.rds")
