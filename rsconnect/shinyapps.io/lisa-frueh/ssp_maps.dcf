@@ -1,0 +1,14 @@
+name: ssp_maps
+title:
+username:
+account: lisa-frueh
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 9866512
+bundleId: 7895135
+url: https://lisa-frueh.shinyapps.io/ssp_maps/
+when: 1699288600.78777
+lastSyncTime: 1699288600.78778
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: build_sf_data.R
