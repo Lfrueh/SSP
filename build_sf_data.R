@@ -31,7 +31,9 @@ for (state in most_states) {
 }
 
 tract_2010 <- all_tracts %>% 
-  st_transform(crs = 'epsg:4326') %>% 
+  st_transform(crs = 'epsg:4326') 
+
+#%>% 
   ms_simplify(., keep = 0.05, keep_shapes = TRUE, sys = TRUE)
 
 # Non-spatial data ----

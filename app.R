@@ -96,15 +96,18 @@ server <- function(input, output, session) {
   county_data <- reactive({
     data <- read_rds("data/county_2010_19_sf.rds") %>% filter(year == input$year_input)
     return(data)
-  }) %>% bindCache(input$year_input)
+  }) 
+
   zcta_data <- reactive({
     data <- read_rds("data/zcta_2010_19_sf.rds") %>% filter(year == input$year_input)
     return(data)
-  }) %>% bindCache(input$year_input)
+  }) 
+
   tract_data <- reactive({
     data <- read_rds("data/tract_2010_19_sf.rds") %>% filter(year == input$year_input)
     return(data)
-  }) %>% bindCache(input$year_input)
+  }) 
+
   
   ## County Choices ----
   county_choices <- reactive({
@@ -113,7 +116,8 @@ server <- function(input, output, session) {
       pull(county.name) %>%
       unique() %>%
       sort()
-  }) %>% bindCache(input$state_input)
+  }) 
+
   
   ### Update county selection UI ----
   output$county_select <- renderUI({
@@ -126,10 +130,10 @@ server <- function(input, output, session) {
   ## Filtered data ----
   data2 <- reactive({
     if(input$geo_input=="County"){
-      imported_data <- county_data() 
+      imported_data <- county_data()
     }
     else if(input$geo_input=="ZCTA"){
-      imported_data <- zcta_data() 
+      imported_data <- zcta_data()  
     } else if(input$geo_input=="Census Tracts"){
       imported_data <- tract_data() 
     }
@@ -142,7 +146,7 @@ server <- function(input, output, session) {
         (is.null(input$county_input) | county.name %in% input$county_input))
     return(data)
   }) 
-
+  
   
   
   
@@ -268,6 +272,8 @@ server <- function(input, output, session) {
   
   
 }
+
+
 
 # Run the application -----
 shinyApp(ui = ui, server = server)
