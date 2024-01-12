@@ -8,7 +8,6 @@ library(plotly)
 library(leaflet)
 library(arrow)
 library(sfarrow)
-library(leaflet.extras)
 
 # Create selection options -----
 state_val <- state.abb
@@ -369,7 +368,7 @@ server <- function(input, output, session) {
      }
    )
     
-  ## Descriptive text ---
+  ## Descriptive text ----
     output$desc_text <- renderUI({
       ice_name <- names(ice_val[ice_val == input$seg_input])
       HTML(paste0('<div style="border: 1px solid #e8e8e8; padding: 10px; background-color: #f5f5f5;border-radius:5px;">
