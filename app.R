@@ -1,18 +1,14 @@
 library(shiny)
 library(readr)
+library(readxl)
 library(stringr)
 library(dplyr)
 library(sf)
 library(plotly)
-library(mapboxapi)
 library(leaflet)
-library(shinycssloaders)
-library(readxl)
-
-mapbox_token <- Sys.getenv("MAPBOX_TOKEN")
-mb_access_token(mapbox_token)
-
-
+library(arrow)
+library(sfarrow)
+library(leaflet.extras)
 
 # Create selection options -----
 state_val <- state.abb
@@ -30,14 +26,16 @@ ice_val <- c(
 # User interface -----
 ui <- navbarPage(
   "Index of Concentration at the Extremes",
-  tabPanel("Interactive Map", 
+## Dashboard ----
+  tabPanel("Dashboard", 
            sidebarLayout(
              sidebarPanel(
                HTML(paste("<h3> Select Data </h3>")),
-               selectInput(inputId = "year_input",
-                           label = "Select a Year",
-                           choices = seq(2010, 2019, 1),
-                           multiple = FALSE),
+                selectInput(inputId = "year_input",
+                            label = "Select a Year",
+                            choices = seq(2010, 2019, 1),
+                            selected = 2019,
+                            multiple = FALSE),
                selectInput(inputId = "state_input",
                            label = "Select a State",
                            choices = state_val,
@@ -55,15 +53,21 @@ ui <- navbarPage(
                            selected = "County"),
                HTML(paste("<em> Note that ZCTA and Census Tract data may take longer to load. </em>")),
                HTML(paste("<h3> Download Data </h3>")),
-               downloadButton("download", "Download Filtered Data as .csv")
+               fluidRow(
+                 column(width = 6,  # 50% width
+                        selectInput(inputId = "download_type",
+                                    label = NULL,
+                                    choices = c("CSV", "Esri Shapefile", "GeoJSON"))),
+                 column(width = 6,  # 50% width
+                        HTML(""),
+                        downloadButton("download", "Download"))
+               )
              ),
-             # Show map
              mainPanel(
-               # Conditional help text
-               uiOutput("helptext"),
-               withSpinner(
-                 plotlyOutput("map")
-               ),
+              uiOutput("helptext"),
+              leafletOutput("leafletmap"),
+              HTML(paste('<p></p>')),
+              uiOutput("desc_text"),
                plotlyOutput("histogram")
              )
            ),
@@ -73,12 +77,16 @@ ui <- navbarPage(
     }")
            ),
            fluid = TRUE),
+
+## Details and Methodology Tab ----
   tabPanel("Details and Methodology",
            includeHTML("details.Rhtml"),
            HTML(paste("<h3> Variable Definitions </h3>")),
            tableOutput("data_def"),
            HTML(paste("<h3> Data Availability </h3>")),
            tableOutput("data_avail"),
+           HTML(paste("<h3> Using This Tool </h3>")),
+           img(src='howto.png', width = "100%"),
            fluid = TRUE)
 )
 
@@ -93,26 +101,51 @@ server <- function(input, output, session) {
   
   # Reactive Expressions ----
   
+  #The joined reactive datasets are, for some reason, data.frame class and not sf class.
   county_data <- reactive({
-    data <- read_rds("data/county_2010_19_sf.rds") %>% filter(year == input$year_input)
-    return(data)
+    data <- open_dataset("data/county_partitioned") %>%
+      filter(year %in% !!input$year_input, state.abb %in% !!input$state_input) %>%
+      collect()
+    
+    data_sf <- open_dataset("data/county_sf_partitioned") %>%
+      filter(state.abb %in% input$state_input)  %>%
+      read_sf_dataset(., find_geom = TRUE)
+    
+    data_joined <- left_join(data, data_sf, by=c("GEOID10", "state.abb", "county.name"))
+    return(st_as_sf(data_joined))
   }) 
-
+  
   zcta_data <- reactive({
-    data <- read_rds("data/zcta_2010_19_sf.rds") %>% filter(year == input$year_input)
-    return(data)
+    data <- open_dataset("data/zcta_partitioned") %>%
+      filter(year %in% !!input$year_input, state.abb %in% !!input$state_input) %>%
+      collect()
+    
+    data_sf <- open_dataset("data/zcta_sf_partitioned") %>%
+      filter(state.abb %in% !!input$state_input)  %>%
+      read_sf_dataset(., find_geom = TRUE)
+    
+    data_joined <- left_join(data, data_sf, by=c("GEOID10", "state.abb", "county.name"))
+    return(st_as_sf(data_joined))
   }) 
 
   tract_data <- reactive({
-    data <- read_rds("data/tract_2010_19_sf.rds") %>% filter(year == input$year_input)
-    return(data)
+    data <- open_dataset("data/tract_partitioned") %>%
+      filter(year %in% !!input$year_input, state.abb %in% !!input$state_input) %>%
+      collect()
+    
+    data_sf <- open_dataset("data/tract_sf_partitioned") %>%
+      filter(state.abb %in% !!input$state_input)  %>%
+      read_sf_dataset(., find_geom = TRUE)
+    
+    data_joined <- left_join(data, data_sf, by=c("GEOID10", "state.abb", "county.name"))
+    return(st_as_sf(data_joined))
   }) 
+
 
   
   ## County Choices ----
   county_choices <- reactive({
     county_data() %>% 
-      filter(state.abb == input$state_input) %>%
       pull(county.name) %>%
       unique() %>%
       sort()
@@ -127,140 +160,230 @@ server <- function(input, output, session) {
                 multiple = TRUE)
   })
   
+
   ## Filtered data ----
   data2 <- reactive({
     if(input$geo_input=="County"){
-      imported_data <- county_data()
+      data <- county_data()
     }
     else if(input$geo_input=="ZCTA"){
-      imported_data <- zcta_data()  
+      data <- zcta_data()  
     } else if(input$geo_input=="Census Tracts"){
-      imported_data <- tract_data() 
+      data <- tract_data() 
     }
-    return(imported_data)
-  }) 
-  
-  data <- reactive({
-    data <- data2() %>% filter(
-      state.abb == input$state_input &
-        (is.null(input$county_input) | county.name %in% input$county_input))
     return(data)
   }) 
+  
+   data <- reactive({
+     data <- data2() %>% filter(
+         is.null(input$county_input) | county.name %in% input$county_input)
+     return(data)
+   }) 
   
   
   
   
   ## Help Text ----
-  helptext <- reactive({
-    if (is.null(data()) || nrow(data()) == 0) {
-      if(input$geo_input %in% c("County", "ZCTA") && input$year_input > 2010){
+    helptext <- reactive({
+      if (input$geo_input == "ZCTA" & input$year_input == 2010){
         return(HTML("<p style='font-size: 16px; font-weight: bold; color: red;'>
-          Please select at least one county to render map!
-                      </p>"))
-      }
-      else if (input$geo_input == "ZCTA" && input$year_input ==2010){
+            ZCTA Available in years 2011 and later.
+                        </p>"))
+      } else if (input$seg_input == "ICEedu" && input$year_input < 2012){
         return(HTML("<p style='font-size: 16px; font-weight: bold; color: red;'>
-          ZCTA Available in years 2011 and later.
-                      </p>"))
+            ICE Education available in years 2012 and later.
+                        </p>"))          
       }
       else {
-        return(HTML("<p style='font-size: 16px; font-weight: bold; color: red;'>
-          Please select at least one county to render map!
-                      </p>"))
+        return(NULL)
       }
-      
-    } else if (input$seg_input == "ICEedu" && input$year_input < 2012){
-      return(HTML("<p style='font-size: 16px; font-weight: bold; color: red;'>
-          ICE Education available in years 2012 and later.
-                      </p>"))  
-    }
-    else {
-      return(NULL)
-    }
-  })
-  
-  output$helptext <- renderUI({
-    helptext()
-  })
+    })
+    
+    output$helptext <- renderUI({
+      helptext()
+    })
   
   
   ## Hover Text -----
   hovertext <- reactive({
+    ice_name <- names(ice_val[ice_val == input$seg_input])
     if (input$geo_input == "County"){
-      ~paste(county.name, ": ", round(get(input$seg_input), 2))
+      ~paste0('<b>',county.name, "</b><br>", ice_name, ': <b>',round(get(input$seg_input), 2),'</b>')
     } else if (input$geo_input == "ZCTA"){
-      ~paste(GEOID10, ": ", round(get(input$seg_input), 2))
+      ~paste0('<b>',GEOID10, "</b><br>", ice_name, ': <b>',round(get(input$seg_input), 2),'</b>')
     } else if (input$geo_input == "Census Tracts"){
-      ~paste(NAMELSAD10, ": ", round(get(input$seg_input), 2))
+      ~paste0('<b>',tract.name,"</b><br>", county.name,'<br>',ice_name, ': <b>', round(get(input$seg_input), 2),'</b>')
     }
   })
+   
+   ## Histogram Y axis label -----
+   y_label <- reactive({
+     if (input$geo_input == "County") {
+    text <- "N Counties"
+   } else if (input$geo_input == "ZCTA") {
+    text <- "N ZCTAs"
+   } else if (input$geo_input == "Census Tracts"){
+    text <-  "N Tracts"
+   }
+     text
+   })
   
-  
-  # Outputs ----- 
-  ## Histogram -----
-  output$histogram <- renderPlotly({
-    data() %>%
-      filter(!is.na(get(input$seg_input))) %>%
-      ggplot(aes(x = get(input$seg_input), fill = ..x..)) +
-      geom_histogram(bins = 50, col = I("grey")) +
-      scale_fill_gradient2(low='orange', mid='white', high='blue',  limits = c(-1,1),
-                           name = input$seg_input) +
-      labs(
-        x = input$seg_input,
-        y = "Count"
-      ) + 
-      theme_minimal()
-  })
-  
-  
-  ## Map -----
-  output$map <- renderPlotly({
-    ice_name <- names(ice_val[ice_val == input$seg_input])
-    plot_mapbox(
-      data = data(),
-      split = ~GEOID10,
-      fillcolor = ~pal(get(input$seg_input)),
-      opacity = 0.5,
-      hoverinfo = "text",
-      text = hovertext(),
-      showlegend = FALSE,
-      stroke = I("grey")) %>%
-      layout(
-        title = paste0(ice_name,": ", 
-                       input$county_input, " ",input$state_input),  # Add your desired title
-        mapbox = list(
-          style = "light",
-          colorbar = list(
-            title = "Color Bar Title"  # Add your color bar title
-          )
-        )
+  ## Descriptive Text ----
+    disadvantaged <- reactive({
+      seg <- input$seg_input
+      case_when(
+        seg == "ICEincome" ~ "low-income people",
+        seg == "ICEedu" ~ "people with less than a high school degree",
+        seg == "ICEraceeth" ~ "Black non-Hispanic people",
+        seg == "ICEhome" ~ "renter-occupied housing units",
+        seg == "ICEincwb" ~ "Black low-income people",
+        seg == "ICEincwnh" ~ "low-income people of color",
+        seg == "ICElanguage" ~ "Spanish or Spanish Creole speakers",
+        TRUE ~ "error"
       )
-  })
+    })
+  
+    privileged <- reactive({
+      seg <- input$seg_input
+      case_when(
+        seg == "ICEincome" ~ "high-income people",
+        seg == "ICEedu" ~ "people with a college education",
+        seg == "ICEraceeth" ~ "White non-Hispanic people",
+        seg == "ICEhome" ~ "owner-occupied housing units",
+        seg == "ICEincwb" ~ "White high-income people",
+        seg == "ICEincwnh" ~ "high-income non-Hispanic White people",
+        seg == "ICElanguage" ~ "English speakers",
+        TRUE ~ "error"
+      )
+    })
+    
+  # Outputs ----- 
+   ## Histogram -----
+   
+   output$histogram <- renderPlotly({
+     ice_name <- names(ice_val[ice_val == input$seg_input])
+     
+     hist <- data() %>%
+       filter(!is.na(get(input$seg_input)), get(input$seg_input)>=-1) %>%
+       ggplot(aes(x = get(input$seg_input), fill = ..x..)) +
+       geom_histogram(bins = 50, col = I("grey"), boundary = 0) +
+       scale_fill_gradient2(low='orange', mid='white', high='blue',  limits = c(-1,1),
+                            name = input$seg_input) +
+       labs(
+         x = ice_name,
+         y = y_label()
+       ) + 
+       theme_minimal() + 
+       theme(legend.position="none") 
+     
+     hist %>% ggplotly(source="histogram", tooltip = NULL) %>% 
+       layout(dragmode = "select",
+               modebar = list(
+                 orientation = "v",
+                remove = c("lasso","pan","autoscale", "zoomin", "zoomout",
+                           "toImage", "hoverCompareCartesian", "toggleHover", "hoverClosestCartesian"))
+                ) %>%
+       config(displaylogo=FALSE,
+              displayModeBar=TRUE) %>%
+       event_register("plotly_selected")
+   })
+
+
+
+   ## Leaflet Map ----
+   
+   output$leafletmap <- renderLeaflet({
+     ice_name <- names(ice_val[ice_val == input$seg_input])
+     d <- event_data("plotly_selected", source = "histogram")
+     selected_range <- if (!is.null(d)) {
+       c(min(d$x), max(d$x))} else{
+         NULL
+       }
+     
+      if (is.null(selected_range)){
+        data <- data()
+      } else{
+        data <- data() %>%
+          filter(get(input$seg_input) >= selected_range[1] & get(input$seg_input) <= selected_range[2])
+      }
+     
+     data %>%
+       leaflet() %>% 
+       addMapPane(name = "polygons", zIndex = 410) %>% 
+       addMapPane(name = "maplabels", zIndex = 420) %>%
+       addProviderTiles("CartoDB.PositronNoLabels") %>%
+       addProviderTiles("CartoDB.PositronOnlyLabels", 
+                        options = leafletOptions(pane = "maplabels"),
+                        group = "Map Labels") %>%
+       addLegend(pal = pal, values = data()[[input$seg_input]], opacity = 1, title = ice_name) %>%
+       addPolygons(color = "gray", weight = 0.7, fillOpacity = 0.9, fillColor= ~pal(get(input$seg_input)),
+                   popup = hovertext(),
+                   group = ice_name)  %>%
+       addLayersControl(overlayGroups = c("Map Labels",
+                                          ice_name))
+   })
+
+   
+
+   
+
+
+   
   
   ## Download Button ----
-  output$download <- downloadHandler(
-    filename = function() {
-      ice <- input$seg_input
-      geo <- input$geo_input
-      state <- input$state_input
-      county <- if (is.null(input$county_input) || length(input$county_input) == 0) {
-        "All_Counties"  # Default value if no county selected
-      } else {
-        paste(input$county_input, collapse = "_")
-      }
-      year <- input$year_input
-      # Set the filename for the downloaded CSV
-      paste(ice, geo, state, county, year, ".csv", sep = "-")
-    },
-    content = function(file) {
-      data_dl <- data() %>%
-        st_drop_geometry(.)
-      # Write the filtered data to a CSV file
-      write.csv(data_dl, file)
-    }
-  )
-  
-  
+   output$download <- downloadHandler(
+     filename = function() {
+       geo <- input$geo_input
+       state <- input$state_input
+       county <- if (is.null(input$county_input) || length(input$county_input) == 0) {
+         "All_Counties"  # Default value if no county selected
+       } else {
+         paste(input$county_input, collapse = "_")
+       }
+       year <- input$year_input
+       suffix <- if (input$download_type == "CSV"){
+         ".csv"
+       } else if (input$download_type == "Esri Shapefile"){
+         ".shp"
+       } else if (input$download_type == "GeoJSON"){
+         ".geojson"
+       }
+       # Set the file name for the downloaded file
+       paste(geo, state, county, year, suffix, sep = "_")
+     },
+     content = function(file){
+       data <- if (input$download_type == "CSV"){
+         data() %>% st_drop_geometry(.)
+       } else if (input$download_type == "Esri Shapefile") {
+         data() %>% rename_all(~substr(., 1, 10))
+       } else if (input$download_type == "GeoJSON"){
+         data()
+       }
+       if (input$download_type == "CSV"){
+         write.csv(data, file)
+       } else if (input$download_type == "Esri Shapefile"){
+         st_write(data, dsn=file, driver = "Esri Shapefile")
+       } else if (input$download_type == "GeoJSON"){
+         st_write(data, dsn=file, driver = "GeoJSON")
+       }
+     }
+   )
+    
+  ## Descriptive text ---
+    output$desc_text <- renderUI({
+      ice_name <- names(ice_val[ice_val == input$seg_input])
+      HTML(paste0('<div style="border: 1px solid #e8e8e8; padding: 10px; background-color: #f5f5f5;border-radius:5px;">
+                  <h3>',ice_name,'</h3>',
+                 '<div style="display: flex; justify-content: space-between;">',
+                 '<div style="width: 50%; text-align: left; color: orange; font-weight:bold;">
+                 Negative values indicate a higher concentration of ', disadvantaged(), '.</div>',
+                 '<div style="width: 50%; text-align: right; color: blue; font-weight:bold;">
+                 Positive valeus indicate a higher concentration of ', privileged(), '.</div>',
+                 '</div>',
+                 '</div>'))
+    })
+   
+
   
   ## Methodology ---- 
   output$data_def <- renderTable(
