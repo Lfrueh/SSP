@@ -31,10 +31,11 @@ ui <- navbarPage(
            sidebarLayout(
              sidebarPanel(
                HTML(paste("<h3> Select Data </h3>")),
-               selectInput(inputId = "year_input",
-                           label = "Select a Year",
-                           choices = seq(2010, 2019, 1),
-                           multiple = FALSE),
+                selectInput(inputId = "year_input",
+                            label = "Select a Year",
+                            choices = seq(2010, 2019, 1),
+                            selected = 2019,
+                            multiple = FALSE),
                selectInput(inputId = "state_input",
                            label = "Select a State",
                            choices = state_val,
@@ -63,8 +64,10 @@ ui <- navbarPage(
                )
              ),
              mainPanel(
-               uiOutput("helptext"),
+              uiOutput("helptext"),
               leafletOutput("leafletmap"),
+              HTML(paste('<p></p>')),
+              uiOutput("desc_text"),
                plotlyOutput("histogram")
              )
            ),
@@ -98,7 +101,7 @@ server <- function(input, output, session) {
   
   # Reactive Expressions ----
   
-  #THe joined reactive datasets are, for some reason, data.frame class and not sf class.
+  #The joined reactive datasets are, for some reason, data.frame class and not sf class.
   county_data <- reactive({
     data <- open_dataset("data/county_partitioned") %>%
       filter(year %in% !!input$year_input, state.abb %in% !!input$state_input) %>%
@@ -138,6 +141,7 @@ server <- function(input, output, session) {
     return(st_as_sf(data_joined))
   }) 
 
+
   
   ## County Choices ----
   county_choices <- reactive({
@@ -156,6 +160,7 @@ server <- function(input, output, session) {
                 multiple = TRUE)
   })
   
+
   ## Filtered data ----
   data2 <- reactive({
     if(input$geo_input=="County"){
@@ -179,27 +184,24 @@ server <- function(input, output, session) {
   
   
   ## Help Text ----
-   helptext <- reactive({
-     if (is.null(data()) || nrow(data()) == 0) {
-         return(HTML("<p style='font-size: 16px; font-weight: bold; color: red;'>
-           ZCTA Available in years 2011 and later.
-                       </p>"))
-
-     }
-       
-     else if (input$seg_input == "ICEedu" && input$year_input < 2012){
-       return(HTML("<p style='font-size: 16px; font-weight: bold; color: red;'>
-           ICE Education available in years 2012 and later.
-                       </p>"))  
-     }
-     else {
-       return(NULL)
-     }
-   })
-   
-   output$helptext <- renderUI({
-     helptext()
-   })
+    helptext <- reactive({
+      if (input$geo_input == "ZCTA" & input$year_input == 2010){
+        return(HTML("<p style='font-size: 16px; font-weight: bold; color: red;'>
+            ZCTA Available in years 2011 and later.
+                        </p>"))
+      } else if (input$seg_input == "ICEedu" && input$year_input < 2012){
+        return(HTML("<p style='font-size: 16px; font-weight: bold; color: red;'>
+            ICE Education available in years 2012 and later.
+                        </p>"))          
+      }
+      else {
+        return(NULL)
+      }
+    })
+    
+    output$helptext <- renderUI({
+      helptext()
+    })
   
   
   ## Hover Text -----
@@ -226,7 +228,35 @@ server <- function(input, output, session) {
      text
    })
   
+  ## Descriptive Text ----
+    disadvantaged <- reactive({
+      seg <- input$seg_input
+      case_when(
+        seg == "ICEincome" ~ "low-income people",
+        seg == "ICEedu" ~ "people with less than a high school degree",
+        seg == "ICEraceeth" ~ "Black non-Hispanic people",
+        seg == "ICEhome" ~ "renter-occupied housing units",
+        seg == "ICEincwb" ~ "Black low-income people",
+        seg == "ICEincwnh" ~ "low-income people of color",
+        seg == "ICElanguage" ~ "Spanish or Spanish Creole speakers",
+        TRUE ~ "error"
+      )
+    })
   
+    privileged <- reactive({
+      seg <- input$seg_input
+      case_when(
+        seg == "ICEincome" ~ "high-income people",
+        seg == "ICEedu" ~ "people with a college education",
+        seg == "ICEraceeth" ~ "White non-Hispanic people",
+        seg == "ICEhome" ~ "owner-occupied housing units",
+        seg == "ICEincwb" ~ "White high-income people",
+        seg == "ICEincwnh" ~ "high-income non-Hispanic White people",
+        seg == "ICElanguage" ~ "English speakers",
+        TRUE ~ "error"
+      )
+    })
+    
   # Outputs ----- 
    ## Histogram -----
    
@@ -234,9 +264,9 @@ server <- function(input, output, session) {
      ice_name <- names(ice_val[ice_val == input$seg_input])
      
      hist <- data() %>%
-       filter(!is.na(get(input$seg_input))) %>%
+       filter(!is.na(get(input$seg_input)), get(input$seg_input)>=-1) %>%
        ggplot(aes(x = get(input$seg_input), fill = ..x..)) +
-       geom_histogram(bins = 50, col = I("grey")) +
+       geom_histogram(bins = 50, col = I("grey"), boundary = 0) +
        scale_fill_gradient2(low='orange', mid='white', high='blue',  limits = c(-1,1),
                             name = input$seg_input) +
        labs(
@@ -244,14 +274,15 @@ server <- function(input, output, session) {
          y = y_label()
        ) + 
        theme_minimal() + 
-       theme(legend.position="none")
+       theme(legend.position="none") 
      
      hist %>% ggplotly(source="histogram", tooltip = NULL) %>% 
        layout(dragmode = "select",
                modebar = list(
                  orientation = "v",
                 remove = c("lasso","pan","autoscale", "zoomin", "zoomout",
-                           "toImage", "hoverCompareCartesian", "toggleHover", "hoverClosestCartesian"))) %>%
+                           "toImage", "hoverCompareCartesian", "toggleHover", "hoverClosestCartesian"))
+                ) %>%
        config(displaylogo=FALSE,
               displayModeBar=TRUE) %>%
        event_register("plotly_selected")
@@ -337,6 +368,20 @@ server <- function(input, output, session) {
        }
      }
    )
+    
+  ## Descriptive text ---
+    output$desc_text <- renderUI({
+      ice_name <- names(ice_val[ice_val == input$seg_input])
+      HTML(paste0('<div style="border: 1px solid #e8e8e8; padding: 10px; background-color: #f5f5f5;border-radius:5px;">
+                  <h3>',ice_name,'</h3>',
+                 '<div style="display: flex; justify-content: space-between;">',
+                 '<div style="width: 50%; text-align: left; color: orange; font-weight:bold;">
+                 Negative values indicate a higher concentration of ', disadvantaged(), '.</div>',
+                 '<div style="width: 50%; text-align: right; color: blue; font-weight:bold;">
+                 Positive valeus indicate a higher concentration of ', privileged(), '.</div>',
+                 '</div>',
+                 '</div>'))
+    })
    
 
   
