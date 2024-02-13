@@ -1,3 +1,6 @@
+
+{
+#Dependencies
 library(shiny)
 library(readr)
 library(readxl)
@@ -8,6 +11,20 @@ library(plotly)
 library(leaflet)
 library(arrow)
 library(sfarrow)
+library(waiter)
+
+  ## Loader code: Global Scope
+  loading_screen = div(
+    tags$img(
+      src = "logo.png",
+      height = 175
+    ),
+    div(
+      style = "padding-top: 50px;",
+      spin_loader()) )
+  
+  
+}
 
 # Create selection options -----
 state_val <- state.abb
@@ -23,10 +40,22 @@ ice_val <- c(
 )
 
 # User interface -----
-ui <- navbarPage(
+ui <- fluidPage(
+  useWaiter(),
+  waiterShowOnLoad(html = loading_screen,
+                   color = 'white'),
+  ## Loader code: UI (end)
+  tags$head(includeCSS("CSS/Header.css")),
+  tags$head(includeCSS("CSS/NavbarPage.css")),
+  tags$head(includeCSS("CSS/Home.css")),
+  tags$head(includeHTML("HTML/FontAwesomeLoader.html")),
+  includeHTML("HTML/Header.html"),
+  navbarPage(
   "Index of Concentration at the Extremes",
 ## Dashboard ----
   tabPanel("Dashboard", 
+           HTML("<h2>Spatial Social Polarization (SSP) Maps:<br>
+                The Index of Concentration at the Extremes (ICE)</h2>"),
            sidebarLayout(
              sidebarPanel(
                HTML(paste("<h3> Select Data </h3>")),
@@ -77,16 +106,26 @@ ui <- navbarPage(
            ),
            fluid = TRUE),
 
+## Using this Tool Tab ----
+
+  tabPanel("Using this Tool",
+           fluidRow(
+           HTML(paste("<h2> Using This Tool </h2>")),
+           img(src='howto.png', width = "100%"),
+           width = 12)
+  ),
+
 ## Details and Methodology Tab ----
   tabPanel("Details and Methodology",
-           includeHTML("details.Rhtml"),
+           includeHTML("HTML/details.Rhtml"),
            HTML(paste("<h3> Variable Definitions </h3>")),
            tableOutput("data_def"),
            HTML(paste("<h3> Data Availability </h3>")),
            tableOutput("data_avail"),
-           HTML(paste("<h3> Using This Tool </h3>")),
-           img(src='howto.png', width = "100%"),
+           includeHTML("HTML/references.Rhtml"),
            fluid = TRUE)
+),
+includeHTML("HTML/Footer.html")
 )
 
 
@@ -97,6 +136,10 @@ pal = colorNumeric(
 
 
 server <- function(input, output, session) {
+  ## Loader code: Server (start)
+  Sys.sleep(1) # do something that takes time
+  waiter_hide()
+  ## Loader code: Server (end)
   
   # Reactive Expressions ----
   
@@ -264,7 +307,7 @@ server <- function(input, output, session) {
      
      hist <- data() %>%
        filter(!is.na(get(input$seg_input)), get(input$seg_input)>=-1) %>%
-       ggplot(aes(x = get(input$seg_input), fill = ..x..)) +
+       ggplot(aes(x = get(input$seg_input), fill = after_stat(x))) +
        geom_histogram(bins = 50, col = I("grey"), boundary = 0) +
        scale_fill_gradient2(low='orange', mid='white', high='blue',  limits = c(-1,1),
                             name = input$seg_input) +
@@ -377,7 +420,7 @@ server <- function(input, output, session) {
                  '<div style="width: 50%; text-align: left; color: orange; font-weight:bold;">
                  Negative values indicate a higher concentration of ', disadvantaged(), '.</div>',
                  '<div style="width: 50%; text-align: right; color: blue; font-weight:bold;">
-                 Positive valeus indicate a higher concentration of ', privileged(), '.</div>',
+                 Positive values indicate a higher concentration of ', privileged(), '.</div>',
                  '</div>',
                  '</div>'))
     })
