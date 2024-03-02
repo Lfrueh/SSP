@@ -9,6 +9,8 @@
 <br><br>
 <b>Contact:</b> Lisa Frueh at <a href="mailto:lisa.frueh@drexel.edu">lisa.frueh@drexel.edu</a>
 
+<br><br><h2><a href="https://drexel-uhc.shinyapps.io/SSP_Maps/">Link to Shiny App</a></h2><br><br>
+
 </p>
 <h3>Introduction</h3>
 <p>This interactive mapping app is a companion to the <a href="https://github.com/samjaros-stanford/spatial_social_polarization_database/tree/main">spatial social polarization database</a>, which compiles pre-calculated spatial social polarization variables and the code used to calculate them. The purpose of the database is to remove computational barriers which prevent the wider use of useful indices in health research. The purpose of this interactive mapping platform is to create an accessible entry point into the visualization and comparison of spatial social polarization variables.</p>
