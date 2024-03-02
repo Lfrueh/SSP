@@ -56,6 +56,9 @@ ui <- fluidPage(
   tabPanel("Dashboard", 
            HTML("<h2>Spatial Social Polarization (SSP) Maps:<br>
                 The Index of Concentration at the Extremes (ICE)</h2>"),
+           tags$head(
+               includeHTML("HTML/google-analytics.Rhtml")
+           ),
            sidebarLayout(
              sidebarPanel(
                HTML(paste("<h3> Select Data </h3>")),

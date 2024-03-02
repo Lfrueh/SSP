@@ -2052,6 +2052,18 @@
       ],
       "Hash": "8318e64ffb3a70e652494017ec455561"
     },
+    "waiter": {
+      "Package": "waiter",
+      "Version": "0.2.5",
+      "Source": "Repository",
+      "Repository": "RSPM",
+      "Requirements": [
+        "R6",
+        "htmltools",
+        "shiny"
+      ],
+      "Hash": "93e6b6c8ae3f81d4be77a0dc74e5cf5e"
+    },
     "withr": {
       "Package": "withr",
       "Version": "2.5.0",
