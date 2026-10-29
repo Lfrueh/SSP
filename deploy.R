@@ -9,10 +9,21 @@
 #' Settings ----
 ## ===============================================
 
-# Confirm these before deploying. They come from rsconnect/ (account
-# lisa-frueh, app ssp_maps). The header links to the drexel-uhc account.
-account <- "lisa-frueh"
-app_name <- "ssp_maps"
+# rsconnect/ holds two deployment records:
+# - test: lisa-frueh / ssp_maps (a personal copy; this account is set up on this
+#   machine).
+# - production: drexel-uhc / SSP_Maps (the link in the app header). This account
+#   must first be added in RStudio (Tools > Global Options > Publishing) with a
+#   token from the drexel-uhc shinyapps.io dashboard. With only lisa-frueh set
+#   up, publishing to it fails with "Forbidden".
+target <- "test" # "test" or "production"
+
+target_settings <- list(
+  test = list(account = "lisa-frueh", app_name = "ssp_maps"),
+  production = list(account = "drexel-uhc", app_name = "SSP_Maps")
+)
+account <- target_settings[[target]]$account
+app_name <- target_settings[[target]]$app_name
 
 # Everything app.R reads at run time.
 app_files <- c("app.R", "CSS", "HTML", "www", "data", "renv.lock")
