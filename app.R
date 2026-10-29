@@ -220,8 +220,14 @@ server <- function(input, output, session) {
   }) 
   
    data <- reactive({
-     data <- data2() %>% filter(
-         is.null(input$county_input) | county.name %in% input$county_input)
+     if (is.null(input$county_input)) {
+       data <- data2()
+     } else {
+       data <- data2() %>% filter(
+       county.name %in% input$county_input
+       )
+     }
+
      return(data)
    }) 
   
