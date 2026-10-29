@@ -2,11 +2,10 @@
 {
 #Dependencies
 library(shiny)
-library(readr)
 library(readxl)
-library(stringr)
 library(dplyr)
 library(sf)
+library(ggplot2)
 library(plotly)
 library(leaflet)
 library(arrow)
@@ -26,8 +25,31 @@ library(waiter)
   
 }
 
+# CARTO basemap tiles (a free API key is now required) -----
+# Set CARTO_API_KEY in .Renviron (see README). Request a key at
+# https://carto.com/basemaps/apikey/
+carto_key <- Sys.getenv("CARTO_API_KEY")
+if (!nzchar(carto_key)) {
+  warning("CARTO_API_KEY is not set; basemap tiles will be watermarked.")
+}
+carto_attribution <- paste0(
+  "&copy; <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap</a> contributors, ",
+  "&copy; <a href='https://carto.com/attributions'>CARTO</a>"
+)
+carto_tiles <- function(style) {
+  paste0("https://basemaps.cartocdn.com/rastertiles/", style,
+         "/{z}/{x}/{y}.png?key=", carto_key)
+}
+
 # Create selection options -----
-state_val <- state.abb
+# DC and Puerto Rico are in the county and ZCTA data. Combinations without data
+# (e.g. tracts in Puerto Rico) show a message instead of an empty map.
+state_val <- sort(c(state.abb, "DC", "PR"))
+
+# Read once per R process: these two small tables do not change between
+# sessions, so there is no reason to re-read the Excel files for every user.
+data_def_table <- read_excel("data/data_def.xlsx")
+data_avail_table <- read_excel("data/data_avail.xlsx")
 
 ice_val <- c(
   "ICE Income" = "ICEincome",
@@ -39,6 +61,53 @@ ice_val <- c(
   "ICE Language" = "ICElanguage"
 )
 
+# Open the parquet datasets once per R process, not inside each reactive.
+# Opening is lazy (it only reads file listings and schemas), so every session
+# shares these objects and the server functions only pay for the rows they filter.
+open_geo_datasets <- function(prefix) {
+  list(
+    attrs = open_dataset(paste0("data/", prefix, "_partitioned")),
+    geom = open_dataset(paste0("data/", prefix, "_sf_partitioned"))
+  )
+}
+
+geo_datasets <- list(
+  "County" = open_geo_datasets("county"),
+  "ZCTA" = open_geo_datasets("zcta"),
+  "Census Tracts" = open_geo_datasets("tract")
+)
+
+# Read one state's boundaries. sfarrow::read_sf_dataset() ignores the state
+# filter with arrow >= ~13 and reads the whole country every time, so filter and
+# collect with arrow, then rebuild the sf object from the WKB geometry column.
+# Boundaries were saved in EPSG:4326 by build_sf_data.R.
+read_state_geom <- function(dataset, state) {
+  geom <- dataset |>
+    filter(state.abb == !!state) |>
+    collect()
+
+  st_sf(
+    select(geom, -geometry),
+    geometry = st_as_sfc(
+      structure(lapply(geom$geometry, as.raw), class = "WKB"),
+      crs = 4326
+    )
+  )
+}
+
+# Popup text per area. Built as plain strings in R and sent to the browser,
+# because the polygons are drawn once and only restyled afterwards.
+popup_html <- function(df, geo, seg, ice_name) {
+  value <- round(df[[seg]], 2)
+  title <- switch(
+    geo,
+    "County" = paste0("<b>", df$county.name, "</b>"),
+    "ZCTA" = paste0("<b>", df$GEOID10, "</b>"),
+    "Census Tracts" = paste0("<b>", df$tract.name, "</b><br>", df$county.name)
+  )
+  paste0(title, "<br>", ice_name, ": <b>", value, "</b>")
+}
+
 # User interface -----
 ui <- fluidPage(
   useWaiter(),
@@ -48,7 +117,8 @@ ui <- fluidPage(
   tags$head(includeCSS("CSS/Header.css")),
   tags$head(includeCSS("CSS/NavbarPage.css")),
   tags$head(includeCSS("CSS/Home.css")),
-  tags$head(includeHTML("HTML/FontAwesomeLoader.html")),
+  tags$head(tags$script(src = "ssp-map.js")),
+  tags$head(tags$link(rel = "icon", type = "image/x-icon", href = "favicon.ico")),
   includeHTML("HTML/Header.html"),
   navbarPage(
   "Index of Concentration at the Extremes",
@@ -102,11 +172,6 @@ ui <- fluidPage(
                plotlyOutput("histogram")
              )
            ),
-           tags$style(
-             HTML(".shiny-output-error {
-      color: white; /* Set the text color to white */
-    }")
-           ),
            fluid = TRUE),
 
 ## Using this Tool Tab ----
@@ -139,62 +204,41 @@ pal = colorNumeric(
 
 
 server <- function(input, output, session) {
-  ## Loader code: Server (start)
-  Sys.sleep(1) # do something that takes time
-  waiter_hide()
-  ## Loader code: Server (end)
-  
+  # The loading spinner is hidden by the map observer once the first draw is done.
+
   # Reactive Expressions ----
-  
-  #The joined reactive datasets are, for some reason, data.frame class and not sf class.
-  county_data <- reactive({
-    data <- open_dataset("data/county_partitioned") %>%
-      filter(year %in% !!input$year_input, state.abb %in% !!input$state_input) %>%
-      collect()
-    
-    data_sf <- open_dataset("data/county_sf_partitioned") %>%
-      filter(state.abb %in% input$state_input)  %>%
-      read_sf_dataset(., find_geom = TRUE)
-    
-    data_joined <- left_join(data, data_sf, by=c("GEOID10", "state.abb", "county.name"))
-    return(st_as_sf(data_joined))
-  }) 
-  
-  zcta_data <- reactive({
-    data <- open_dataset("data/zcta_partitioned") %>%
-      filter(year %in% !!input$year_input, state.abb %in% !!input$state_input) %>%
-      collect()
-    
-    data_sf <- open_dataset("data/zcta_sf_partitioned") %>%
-      filter(state.abb %in% !!input$state_input)  %>%
-      read_sf_dataset(., find_geom = TRUE)
-    
-    data_joined <- left_join(data, data_sf, by=c("GEOID10", "state.abb", "county.name"))
-    return(st_as_sf(data_joined))
-  }) 
 
-  tract_data <- reactive({
-    data <- open_dataset("data/tract_partitioned") %>%
-      filter(year %in% !!input$year_input, state.abb %in% !!input$state_input) %>%
+  ## Geometry ----
+  # Boundaries depend only on geography and state, not on year or measure, so
+  # they are read once per combination and cached instead of re-read on every
+  # year change.
+  geom_data <- reactive({
+    read_state_geom(geo_datasets[[input$geo_input]]$geom, input$state_input)
+  }) |>
+    bindCache(input$geo_input, input$state_input)
+
+  ## Attributes ----
+  # Only the ICE values change with year; they are small compared to geometry.
+  # state.abb and county.name already come with the geometry, so drop them here
+  # to keep the join free of duplicate columns.
+  attr_data <- reactive({
+    state <- input$state_input
+    year <- as.integer(input$year_input)
+    geo_datasets[[input$geo_input]]$attrs |>
+      filter(year == !!year, state.abb == !!state) |>
+      select(-any_of(c("state.abb", "county.name"))) |>
       collect()
-    
-    data_sf <- open_dataset("data/tract_sf_partitioned") %>%
-      filter(state.abb %in% !!input$state_input)  %>%
-      read_sf_dataset(., find_geom = TRUE)
-    
-    data_joined <- left_join(data, data_sf, by=c("GEOID10", "state.abb", "county.name"))
-    return(st_as_sf(data_joined))
-  }) 
+  }) |>
+    bindCache(input$geo_input, input$state_input, input$year_input)
 
-
-  
   ## County Choices ----
+  # Taken from the geometry so the list does not depend on year and the county
+  # selection is not reset when only the year changes.
   county_choices <- reactive({
-    county_data() %>% 
-      pull(county.name) %>%
-      unique() %>%
+    geom_data()$county.name |>
+      unique() |>
       sort()
-  }) 
+  })
 
   
   ### Update county selection UI ----
@@ -207,17 +251,16 @@ server <- function(input, output, session) {
   
 
   ## Filtered data ----
+  # Keeping the sf object on the left of the join keeps the sf class. The inner
+  # join keeps only areas that have both a boundary and data for the chosen year.
   data2 <- reactive({
-    if(input$geo_input=="County"){
-      data <- county_data()
-    }
-    else if(input$geo_input=="ZCTA"){
-      data <- zcta_data()  
-    } else if(input$geo_input=="Census Tracts"){
-      data <- tract_data() 
-    }
-    return(data)
-  }) 
+    inner_join(
+      geom_data(),
+      attr_data(),
+      by = join_by(GEOID10),
+      relationship = "one-to-one"
+    )
+  })
   
    data <- reactive({
      if (is.null(input$county_input)) {
@@ -235,19 +278,25 @@ server <- function(input, output, session) {
   
   
   ## Help Text ----
+    # The year input is text, so convert it before comparing.
     helptext <- reactive({
-      if (input$geo_input == "ZCTA" & input$year_input == 2010){
-        return(HTML("<p style='font-size: 16px; font-weight: bold; color: red;'>
-            ZCTA Available in years 2011 and later.
-                        </p>"))
-      } else if (input$seg_input == "ICEedu" && input$year_input < 2012){
-        return(HTML("<p style='font-size: 16px; font-weight: bold; color: red;'>
-            ICE Education available in years 2012 and later.
-                        </p>"))          
+      year <- as.integer(input$year_input)
+      message <- if (input$geo_input == "ZCTA" && year == 2010) {
+        "ZCTA Available in years 2011 and later."
+      } else if (input$seg_input == "ICEedu" && year < 2012) {
+        "ICE Education available in years 2012 and later."
+      } else if (nrow(data()) == 0) {
+        # Catches any other gap in the data (e.g. tracts in Puerto Rico).
+        "No data are available for this combination of year, state and geography."
       }
-      else {
+
+      if (is.null(message)) {
         return(NULL)
       }
+      tags$p(
+        style = "font-size: 16px; font-weight: bold; color: red;",
+        message
+      )
     })
     
     output$helptext <- renderUI({
@@ -255,18 +304,6 @@ server <- function(input, output, session) {
     })
   
   
-  ## Hover Text -----
-  hovertext <- reactive({
-    ice_name <- names(ice_val[ice_val == input$seg_input])
-    if (input$geo_input == "County"){
-      ~paste0('<b>',county.name, "</b><br>", ice_name, ': <b>',round(get(input$seg_input), 2),'</b>')
-    } else if (input$geo_input == "ZCTA"){
-      ~paste0('<b>',GEOID10, "</b><br>", ice_name, ': <b>',round(get(input$seg_input), 2),'</b>')
-    } else if (input$geo_input == "Census Tracts"){
-      ~paste0('<b>',tract.name,"</b><br>", county.name,'<br>',ice_name, ': <b>', round(get(input$seg_input), 2),'</b>')
-    }
-  })
-   
    ## Histogram Y axis label -----
    y_label <- reactive({
      if (input$geo_input == "County") {
@@ -312,8 +349,10 @@ server <- function(input, output, session) {
    ## Histogram -----
    
    output$histogram <- renderPlotly({
+     # The reason is shown in the help text above the map.
+     validate(need(nrow(data()) > 0, "No data to plot for this selection."))
      ice_name <- names(ice_val[ice_val == input$seg_input])
-     
+
      hist <- data() %>%
        filter(!is.na(get(input$seg_input)), get(input$seg_input)>=-1) %>%
        ggplot(aes(x = get(input$seg_input), fill = after_stat(x))) +
@@ -343,35 +382,148 @@ server <- function(input, output, session) {
 
    ## Leaflet Map ----
    
+   ### Base map ----
+   # Built once. Tiles never change, so they stay out of the observers below,
+   # which only redraw polygons through leafletProxy().
    output$leafletmap <- renderLeaflet({
-     ice_name <- names(ice_val[ice_val == input$seg_input])
+     leaflet() |>
+       addMapPane(name = "polygons", zIndex = 410) |>
+       addMapPane(name = "maplabels", zIndex = 420) |>
+       addTiles(urlTemplate = carto_tiles("light_nolabels"),
+                attribution = carto_attribution) |>
+       addTiles(urlTemplate = carto_tiles("light_only_labels"),
+                attribution = carto_attribution,
+                options = tileOptions(pane = "maplabels"),
+                group = "Map Labels") |>
+       setView(lng = -96, lat = 38, zoom = 4) |>
+       addLayersControl(overlayGroups = c("Map Labels", "ICE values"))
+   })
+
+   # leaflet drops proxy calls sent before the browser has built the map, and
+   # sets its zoom input as soon as it has, so wait for that first.
+   map_ready <- reactiveVal(FALSE)
+   observeEvent(input$leafletmap_zoom, map_ready(TRUE), once = TRUE)
+
+   ### Area on the map ----
+   # Boundaries for the selected state, narrowed to the chosen counties. This
+   # does not depend on year, measure or brush, so those never redraw polygons.
+   area_geom <- reactive({
+     area <- geom_data()
+     if (!is.null(input$county_input)) {
+       area <- filter(area, county.name %in% input$county_input)
+     }
+     area
+   })
+
+   ### Draw polygons ----
+   # Sent once per area. They start invisible and get their colors from the
+   # restyle observer below. layerId lets the browser match styles to polygons.
+   shapes_version <- reactiveVal(0)
+   observe({
+     req(map_ready())
+     area <- area_geom()
+
+     proxy <- leafletProxy("leafletmap") |>
+       clearShapes()
+
+     if (nrow(area) > 0) {
+       proxy |>
+         addPolygons(
+           data = area,
+           layerId = ~GEOID10,
+           group = "ICE values",
+           color = "gray",
+           weight = 0.7,
+           opacity = 0,
+           fillOpacity = 0
+         )
+     }
+
+     # Tells the restyle observer the polygons it should style are now drawn.
+     shapes_version(isolate(shapes_version()) + 1)
+   })
+
+   ### Histogram brush ----
+   # NULL when nothing is brushed.
+   brush_range <- reactive({
      d <- event_data("plotly_selected", source = "histogram")
-     selected_range <- if (!is.null(d)) {
-       c(min(d$x), max(d$x))} else{
-         NULL
-       }
-     
-      if (is.null(selected_range)){
-        data <- data()
-      } else{
-        data <- data() %>%
-          filter(get(input$seg_input) >= selected_range[1] & get(input$seg_input) <= selected_range[2])
-      }
-     
-     data %>%
-       leaflet() %>% 
-       addMapPane(name = "polygons", zIndex = 410) %>% 
-       addMapPane(name = "maplabels", zIndex = 420) %>%
-       addProviderTiles("CartoDB.PositronNoLabels") %>%
-       addProviderTiles("CartoDB.PositronOnlyLabels", 
-                        options = leafletOptions(pane = "maplabels"),
-                        group = "Map Labels") %>%
-       addLegend(pal = pal, values = data()[[input$seg_input]], opacity = 1, title = ice_name) %>%
-       addPolygons(color = "gray", weight = 0.7, fillOpacity = 0.9, fillColor= ~pal(get(input$seg_input)),
-                   popup = hovertext(),
-                   group = ice_name)  %>%
-       addLayersControl(overlayGroups = c("Map Labels",
-                                          ice_name))
+     if (is.null(d)) NULL else range(d$x)
+   })
+
+   ### Color polygons ----
+   # Year, measure and brush only change colors, popup text and dimming, so send
+   # just those. Areas outside the brush are faded, not removed, so the map keeps
+   # its geographic context.
+   observe({
+     req(map_ready(), shapes_version() > 0)
+     seg <- input$seg_input
+     ice_name <- names(ice_val[ice_val == seg])
+     df <- st_drop_geometry(data())
+     value <- df[[seg]]
+
+     brush <- brush_range()
+     dim_area <- if (is.null(brush)) {
+       rep(FALSE, nrow(df))
+     } else {
+       !(value >= brush[1] & value <= brush[2]) | is.na(value)
+     }
+
+     # Areas with a missing value stay on the map in the palette's NA gray.
+     fill <- pal(value)
+     fill[is.na(fill)] <- "#808080"
+
+     restyle <- list(
+       id = "leafletmap",
+       ids = df$GEOID10,
+       fill = fill,
+       popup = popup_html(df, input$geo_input, seg, ice_name),
+       dim = dim_area
+     )
+
+     # leafletProxy() holds its calls until the end of the flush, so hold this
+     # message too, otherwise it reaches the browser before the polygons do.
+     session$onFlushed(
+       function() session$sendCustomMessage("ssp-restyle", restyle),
+       once = TRUE
+     )
+
+     proxy <- leafletProxy("leafletmap")
+     # Nothing to show (e.g. ZCTA in 2010): drop the old legend so it is not stale.
+     if (nrow(df) == 0) {
+       removeControl(proxy, "ice_legend")
+     } else {
+       addLegend(
+         proxy,
+         pal = pal,
+         values = value,
+         opacity = 1,
+         title = ice_name,
+         layerId = "ice_legend"
+       )
+     }
+
+     # First colors are on the map, so it is ready to look at.
+     waiter_hide()
+   })
+
+   ### Zoom to the selection ----
+   # Refit only when the area changes (state, geography, counties), not when
+   # year or measure change, so the view does not jump while exploring.
+   view_bounds <- reactive({
+     st_bbox(area_geom())
+   })
+
+   observe({
+     req(map_ready())
+     bounds <- view_bounds()
+     req(all(is.finite(bounds)))
+     leafletProxy("leafletmap") |>
+       fitBounds(
+         lng1 = bounds[["xmin"]],
+         lat1 = bounds[["ymin"]],
+         lng2 = bounds[["xmax"]],
+         lat2 = bounds[["ymax"]]
+       )
    })
 
    
@@ -382,40 +534,61 @@ server <- function(input, output, session) {
    
   
   ## Download Button ----
+   # The download holds every area in the current selection (year, state,
+   # geography, counties), the same areas the map shows. The histogram brush
+   # only fades areas on the map and does not change the download.
+   download_base_name <- reactive({
+     county <- input$county_input
+     county_label <- if (length(county) == 0) {
+       "All_Counties"
+     } else if (length(county) == 1) {
+       county
+     } else {
+       # Many county names would make an unusably long file name.
+       paste0(length(county), "_Counties")
+     }
+
+     name <- paste(
+       input$geo_input, input$state_input, county_label, input$year_input,
+       sep = "_"
+     )
+     gsub("[^A-Za-z0-9_-]+", "_", name)
+   })
+
    output$download <- downloadHandler(
      filename = function() {
-       geo <- input$geo_input
-       state <- input$state_input
-       county <- if (is.null(input$county_input) || length(input$county_input) == 0) {
-         "All_Counties"  # Default value if no county selected
-       } else {
-         paste(input$county_input, collapse = "_")
-       }
-       year <- input$year_input
-       suffix <- if (input$download_type == "CSV"){
-         ".csv"
-       } else if (input$download_type == "Esri Shapefile"){
-         ".shp"
-       } else if (input$download_type == "GeoJSON"){
-         ".geojson"
-       }
-       # Set the file name for the downloaded file
-       paste(geo, state, county, year, suffix, sep = "_")
+       extension <- switch(
+         input$download_type,
+         "CSV" = "csv",
+         # A shapefile is several files, so it is delivered as a zip.
+         "Esri Shapefile" = "zip",
+         "GeoJSON" = "geojson"
+       )
+       paste0(download_base_name(), ".", extension)
      },
-     content = function(file){
-       data <- if (input$download_type == "CSV"){
-         data() %>% st_drop_geometry(.)
+     content = function(file) {
+       download_data <- data()
+
+       if (input$download_type == "CSV") {
+         write.csv(st_drop_geometry(download_data), file, row.names = FALSE)
+       } else if (input$download_type == "GeoJSON") {
+         st_write(
+           download_data, dsn = file, driver = "GeoJSON",
+           delete_dsn = TRUE, quiet = TRUE
+         )
        } else if (input$download_type == "Esri Shapefile") {
-         data() %>% rename_all(~substr(., 1, 10))
-       } else if (input$download_type == "GeoJSON"){
-         data()
-       }
-       if (input$download_type == "CSV"){
-         write.csv(data, file)
-       } else if (input$download_type == "Esri Shapefile"){
-         st_write(data, dsn=file, driver = "Esri Shapefile")
-       } else if (input$download_type == "GeoJSON"){
-         st_write(data, dsn=file, driver = "GeoJSON")
+         # Shapefile column names are limited to 10 characters.
+         shp_data <- rename_all(download_data, ~ substr(., 1, 10))
+         shp_dir <- tempfile("shapefile")
+         dir.create(shp_dir)
+         on.exit(unlink(shp_dir, recursive = TRUE), add = TRUE)
+
+         st_write(
+           shp_data,
+           dsn = file.path(shp_dir, paste0(download_base_name(), ".shp")),
+           driver = "ESRI Shapefile", quiet = TRUE
+         )
+         zip::zipr(file, files = list.files(shp_dir, full.names = TRUE))
        }
      }
    )
@@ -437,12 +610,8 @@ server <- function(input, output, session) {
 
   
   ## Methodology ---- 
-  output$data_def <- renderTable(
-    read_excel("data/data_def.xlsx")
-  )
-  output$data_avail <- renderTable(
-    read_excel("data/data_avail.xlsx")
-  )
+  output$data_def <- renderTable(data_def_table)
+  output$data_avail <- renderTable(data_avail_table)
   
   
 }

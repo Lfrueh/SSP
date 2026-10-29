@@ -1,0 +1,47 @@
+Rework app for speed and reproducibility; add rebuildable data pipeline
+
+Speed
+- Remove the 1 s Sys.sleep on every session; hide the spinner after the
+  first map draw instead.
+- Read boundaries once per state/geography (cached) instead of on every
+  year change. sfarrow::read_sf_dataset() ignores the state filter with
+  arrow 26, so every read loaded the whole country; replace it with
+  read_state_geom() (arrow filter + WKB -> sf).
+- Open the parquet datasets once at startup, not inside each reactive.
+- Draw map polygons once per area and restyle them in the browser
+  (www/ssp-map.js) when year, measure or histogram brush change. The brush
+  now fades areas instead of removing them. PA tract year/measure changes
+  went from ~1.3-2.1 s to ~0.4 s.
+- Read the two Excel tables once at startup; drop unused readr/stringr.
+
+Data
+- One row per ZCTA (primary county = most population) instead of one per
+  ZCTA-county pair; fixes duplicated polygons and histogram counts.
+- Drop the Census relationship columns from ZCTA data (64 MB -> 22 MB).
+- Add DC and Puerto Rico to the state list; add DC tract boundaries.
+
+Fixes
+- Basemap: use CARTO tiles with API key from CARTO_API_KEY (.Renviron,
+  gitignored).
+- Show errors (remove white .shiny-output-error CSS); add validate() and a
+  data-driven "no data" message.
+- Downloads: shapefile as zip, CSV without row numbers, GeoJSON overwrite,
+  sensible file names.
+- Year compared as integer; && instead of &.
+- Remove unused Font Awesome kit (favicon link moved into app.R); fix
+  includeHTML warnings (strip html/head/body wrappers); fix typos.
+
+Reproducibility
+- Replace build_sf_data.R with data-raw/ (00_get_data, 01_prep_data,
+  02_write_app_data, 03_check_data, run_all) plus config and helpers.
+- Pin ICE source to commit d26cf5e; record download hashes in
+  data-raw/source_log.csv.
+- Simplify boundaries with V8 one state at a time (no Node/mapshaper).
+- 03_check_data.R validates IDs, states, years and value ranges.
+- 02_write_app_data.R will not overwrite data/ without SSP_OVERWRITE=yes.
+- New README (setup, rebuild, deploy, data sources) and deploy.R with an
+  explicit file list.
+- Verified with a full rebuild: ICE values identical to existing data.
+
+Docs
+- Add CODE_REVIEW.md with findings, measurements and progress.

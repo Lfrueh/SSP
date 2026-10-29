@@ -4,3 +4,5 @@
 .Ruserdata
 data/**
 rsconnect/*
+.Renviron
+data-raw/cache/
